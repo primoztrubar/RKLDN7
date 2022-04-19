@@ -1,18 +1,36 @@
 import java.io.*;
 import java.net.*;
+import org.json.simple.*;
+import org.json.simple.parser.JSONParser;
+
 
 public class ChatClient extends Thread
 {
 	protected int serverPort = 1234;
+	protected static BufferedReader std_in;
 
 	public static void main(String[] args) throws Exception {
-		new ChatClient();
+		std_in = new BufferedReader(new InputStreamReader(System.in));
+		System.out.println("Za povezavo s strežnikom se morate prijaviti z imenom:");
+		while (true) {
+			String ime = std_in.readLine();
+			if (ime == null || ime.length() == 0) {
+				System.out.println("Vpišite ime:");
+			}
+			else {
+				new ChatClient(ime);
+				break;
+			}
+		}
 	}
 
-	public ChatClient() throws Exception {
+	public ChatClient(String ime) throws Exception {
 		Socket socket = null;
 		DataInputStream in = null;
 		DataOutputStream out = null;
+
+		JSONObject prijava = new JSONObject();
+		prijava.put("prijava", ime);
 
 		// connect to the chat server
 		try {
@@ -28,12 +46,41 @@ public class ChatClient extends Thread
 			e.printStackTrace(System.err);
 			System.exit(1);
 		}
-
-		// read from STDIN and send messages to the chat server
-		BufferedReader std_in = new BufferedReader(new InputStreamReader(System.in));
+		sendMessage(prijava.toJSONString(), out);
 		String userInput;
-		while ((userInput = std_in.readLine()) != null) { // read a line from the console
-			this.sendMessage(userInput, out); // send the message to the chat server
+		// read from STDIN and send messages to the chat server
+		while (true) {
+			System.out.println("javno ali privatno sporočilo?");
+			userInput = std_in.readLine();
+			if (userInput == null) {
+				System.out.println("napaka: vhod je null");
+				break;
+			}
+			if (userInput.equals("javno")) {
+				System.out.println("napišite sporočilo:");
+				userInput = std_in.readLine();
+				if (userInput == null) {
+					System.out.println("napaka: vhod je null");
+					break;
+				}
+				javnoSporocilo(userInput, out);
+			}
+			else if (userInput.equals("privatno")) {
+				System.out.println("Vpišite prejemnika:");
+				String prejemnik = std_in.readLine();
+				if (prejemnik == null) {
+					System.out.println("napaka: vhod je null");
+					break;
+				}
+
+				System.out.println("napišite sporočilo:");
+				userInput = std_in.readLine();
+				if (userInput == null) {
+					System.out.println("napaka: vhod je null");
+					break;
+				}
+				privatnoSporocilo(userInput, prejemnik, out);
+			}
 		}
 
 		// cleanup
@@ -41,6 +88,21 @@ public class ChatClient extends Thread
 		in.close();
 		std_in.close();
 		socket.close();
+	}
+
+	private void javnoSporocilo(String sporocilo, DataOutputStream out) {
+		JSONObject jsonObject = new JSONObject();
+		jsonObject.put("tipSporocila", "javno");
+		jsonObject.put("sporocilo", sporocilo);
+		sendMessage(jsonObject.toJSONString(), out);
+	}
+
+	private void privatnoSporocilo(String sporocilo, String za, DataOutputStream out) {
+		JSONObject jsonObject = new JSONObject();
+		jsonObject.put("tipSporocila", "privatno");
+		jsonObject.put("za", za);
+		jsonObject.put("sporocilo", sporocilo);
+		sendMessage(jsonObject.toJSONString(), out);
 	}
 
 	private void sendMessage(String message, DataOutputStream out) {
@@ -57,16 +119,27 @@ public class ChatClient extends Thread
 // wait for messages from the chat server and print the out
 class ChatClientMessageReceiver extends Thread {
 	private DataInputStream in;
+	private JSONParser parser;
 
 	public ChatClientMessageReceiver(DataInputStream in) {
 		this.in = in;
+		parser = new JSONParser();
 	}
 
 	public void run() {
 		try {
 			String message;
 			while ((message = this.in.readUTF()) != null) { // read new message
-				System.out.println("[RKchat] " + message); // print the message to the console
+				JSONObject jsonObject = (JSONObject)parser.parse(message);
+				if (jsonObject.containsKey("napaka")) {
+					System.out.println("napaka: " + jsonObject.get("napaka"));
+					continue;
+				}
+				if (!jsonObject.containsKey("tipSporocila") || !jsonObject.containsKey("od") || !jsonObject.containsKey("sporocilo")) {
+					System.out.println("napaka: manjkajoči podatki v sporočilu strežnika");
+					continue;
+				}
+				System.out.println("[RKchat:" + jsonObject.get("tipSporocila") +"] " + jsonObject.get("od") + " => " + jsonObject.get("sporocilo")); // print the message to the console
 			}
 		} catch (Exception e) {
 			System.err.println("[system] could not read message");
